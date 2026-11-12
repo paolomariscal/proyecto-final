@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Detector de celulares</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #eef1f4; --panel: #ffffff; --ink: #14202b; --muted: #5d6b79; --line: #d5dce3;
+    --iphone: #2f6bff; --samsung: #14956f; --fondo: #8a96a3;
+    --led-off: #c9d1d9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f161d; --panel: #18222c; --ink: #eaf0f5; --muted: #97a5b3; --line: #2a3745; --led-off: #34414e; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--ink);
+    font-family: "Sora", system-ui, sans-serif; line-height: 1.5;
+    display: grid; place-items: center; padding: 24px;
+  }
+  main {
+    width: 100%; max-width: 920px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 20px; padding: 32px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 32px;
+  }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; padding: 20px; } }
+  h1 { margin: 0 0 4px; font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; }
+  .sub { margin: 0 0 20px; color: var(--muted); font-size: .9rem; }
+  #viewer {
+    aspect-ratio: 1; width: 100%; border-radius: 14px; background: var(--bg);
+    border: 1px dashed var(--line); display: grid; place-items: center;
+    overflow: hidden; color: var(--muted); font-size: .9rem; text-align: center; padding: 12px;
+  }
+  #viewer canvas, #viewer img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  button, label.btn {
+    font: inherit; font-weight: 600; font-size: .9rem; cursor: pointer;
+    padding: 10px 16px; border-radius: 10px; border: 1px solid var(--ink);
+    background: var(--ink); color: var(--panel);
+  }
+  button.alt, label.btn { background: transparent; color: var(--ink); border-color: var(--line); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible, label.btn:focus-within { outline: 3px solid var(--iphone); outline-offset: 2px; }
+  input[type=file] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+
+  .result { display: flex; flex-direction: column; justify-content: center; }
+  #verdict {
+    font-size: clamp(2.2rem, 6vw, 3.4rem); font-weight: 800; letter-spacing: -0.03em;
+    line-height: 1.05; margin: 0 0 4px; transition: color .25s;
+  }
+  #verdictSub { margin: 0 0 24px; color: var(--muted); min-height: 1.5em; }
+  .row { margin-bottom: 16px; }
+  .row .head { display: flex; justify-content: space-between; font-size: .9rem; font-weight: 600; margin-bottom: 6px; }
+  .track { height: 10px; border-radius: 6px; background: var(--bg); overflow: hidden; }
+  .fill { height: 100%; width: 0; border-radius: 6px; transition: width .15s linear; }
+  #status { margin-top: 8px; font-size: .85rem; color: var(--muted); }
+  #status.error { color: #d6402f; }
+
+  /* ---- LED ---- */
+  .led-card {
+    margin-top: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 14px;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  }
+  .led { --c: var(--led-off); width: 64px; height: 84px; flex: none; }
+  .led .glass { fill: var(--c); transition: fill .2s; }
+  .led .glow { fill: var(--c); opacity: 0; filter: blur(10px); transition: opacity .2s, fill .2s; }
+  .led.on .glow { opacity: .75; }
+  .led .metal { fill: none; stroke: var(--muted); stroke-width: 3; stroke-linecap: round; }
+  .led .shine { fill: #fff; opacity: .55; }
+  .led-info { flex: 1; min-width: 150px; }
+  .led-info strong { display: block; font-size: 1rem; }
+  .led-info span { font-size: .82rem; color: var(--muted); }
+  #btnLed[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+  #btnLed[aria-pressed="false"] { background: transparent; color: var(--ink); border-color: var(--ink); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>Detector de celulares</h1>
+    <p class="sub">Muestra un celular a la cámara o sube una foto. El LED se enciende del color de lo que detecte.</p>
+    <div id="viewer">Aquí aparecerá la cámara o tu foto</div>
+    <div class="actions">
+      <button id="btnCam" disabled>Activar cámara</button>
+      <label class="btn">Subir foto<input type="file" id="file" accept="image/*" disabled></label>
+      <button id="btnArd" class="alt">Conectar Arduino</button>
+    </div>
+    <p id="status">Cargando modelo…</p>
+  </section>
+
+  <section class="result" aria-live="polite">
+    <h2 id="verdict">—</h2>
+    <p id="verdictSub">Esperando una imagen.</p>
+    <div id="bars"></div>
+
+    <div class="led-card">
+      <svg class="led" id="led" viewBox="0 0 64 84" role="img" aria-label="LED apagado">
+        <circle class="glow" cx="32" cy="30" r="28"/>
+        <path class="glass" d="M14 34 V26 a18 18 0 0 1 36 0 V34 Z"/>
+        <rect class="glass" x="10" y="34" width="44" height="8" rx="2"/>
+        <path class="shine" d="M20 24 a12 12 0 0 1 8 -10 a14 14 0 0 0 -4 12 Z"/>
+        <path class="metal" d="M24 42 V74 M40 42 V66"/>
+      </svg>
+      <div class="led-info">
+        <strong id="ledName">LED apagado</strong>
+        <span id="ledMode">LED virtual (sin Arduino)</span>
+      </div>
+      <button id="btnLed" aria-pressed="false">Encender LED</button>
+    </div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+<script>
+  // Etiquetas de metadata.json: iphone, samsung, fondo
+  const NAMES = {
+    iphone:  { title: "iPhone",      color: "var(--iphone)" },
+    samsung: { title: "Samsung",     color: "var(--samsung)" },
+    fondo:   { title: "Sin celular", color: "var(--fondo)" }
+  };
+
+  // Color del LED por clase. "fondo" no tiene LED: se queda apagado.
+  // code = letra que recibe el Arduino por serie.
+  const LEDS = {
+    iphone:  { name: "LED azul",  color: "#2f6bff", code: "I" },
+    samsung: { name: "LED verde", color: "#19d68f", code: "S" }
+  };
+  const OFF_CODE = "O";
+
+  let model, webcam, maxClasses, running = false;
+  const $ = id => document.getElementById(id);
+
+  async function init() {
+    try {
+      model = await tmImage.load("./model.json", "./metadata.json");
+      maxClasses = model.getTotalClasses();
+      buildBars(model.getClassLabels());
+      $("btnCam").disabled = false;
+      $("file").disabled = false;
+      setStatus("Modelo listo.");
+    } catch (e) {
+      console.error(e);
+      let motivo = "";
+      if (location.protocol === "file:") motivo = "La página se abrió como archivo. Ábrela con Go Live (http://127.0.0.1:5500).";
+      else if (typeof tmImage === "undefined" || typeof tf === "undefined") motivo = "No cargaron las librerías de internet (TensorFlow.js / Teachable Machine). Revisa tu conexión o bloqueadores.";
+      else motivo = "No se encontraron model.json, weights.bin o metadata.json junto a index.html (revisa que se llamen exactamente así). Detalle: " + (e && e.message ? e.message : e);
+      setStatus("No se pudo cargar el modelo. " + motivo, true);
+    }
+  }
+
+  function buildBars(labels) {
+    $("bars").innerHTML = labels.map(l => {
+      const n = NAMES[l] || { title: l, color: "var(--fondo)" };
+      return `<div class="row"><div class="head"><span>${n.title}</span><span id="p-${l}">0%</span></div>
+        <div class="track"><div class="fill" id="f-${l}" style="background:${n.color}"></div></div></div>`;
+    }).join("");
+  }
+
+  function show(predictions, immediate = false) {
+    let best = predictions[0];
+    predictions.forEach(p => {
+      const pct = Math.round(p.probability * 100);
+      $("p-" + p.className).textContent = pct + "%";
+      $("f-" + p.className).style.width = pct + "%";
+      if (p.probability > best.probability) best = p;
+    });
+    consider(best, immediate);
+    const n = NAMES[best.className] || { title: best.className, color: "var(--ink)" };
+    $("verdict").textContent = n.title;
+    $("verdict").style.color = n.color;
+    $("verdictSub").textContent = best.className === "fondo"
+      ? "No veo ningún celular."
+      : `Estoy ${Math.round(best.probability * 100)}% seguro.`;
+  }
+
+  async function loop() {
+    if (!running) return;
+    webcam.update();
+    show(await model.predict(webcam.canvas));
+    window.requestAnimationFrame(loop);
+  }
+
+  async function toggleCamera() {
+    if (running) {
+      running = false;
+      await webcam.stop();
+      $("viewer").textContent = "Cámara detenida";
+      $("btnCam").textContent = "Activar cámara";
+      $("btnCam").classList.remove("alt");
+      return;
+    }
+    try {
+      setStatus("Pidiendo acceso a la cámara…");
+      webcam = new tmImage.Webcam(400, 400, true); // true = efecto espejo
+      await webcam.setup();
+      await webcam.play();
+      $("viewer").replaceChildren(webcam.canvas);
+      running = true;
+      $("btnCam").textContent = "Detener cámara";
+      $("btnCam").classList.add("alt");
+      setStatus("Cámara activa.");
+      loop();
+    } catch (e) {
+      setStatus("No se pudo usar la cámara. Revisa los permisos del navegador.", true);
+    }
+  }
+
+  async function onFile(ev) {
+    const f = ev.target.files[0];
+    if (!f) return;
+    if (running) await toggleCamera();
+    const img = new Image();
+    img.onload = async () => {
+      $("viewer").replaceChildren(img);
+      show(await model.predict(img), true); // foto: una sola lectura, sin esperar estabilidad
+      setStatus("Foto analizada.");
+    };
+    img.src = URL.createObjectURL(f);
+    ev.target.value = "";
+  }
+
+  function setStatus(msg, isError = false) {
+    $("status").textContent = msg;
+    $("status").classList.toggle("error", isError);
+  }
+
+  // ================= LED (virtual + Arduino) =================
+  let ledEnabled = false;   // lo controla el botón
+  let target = null;        // clase detectada y estable: "iphone" | "samsung" | "fondo"
+  let candidate = "", count = 0;
+  let writer = null, lastSent = "";
+
+  // Acepta la detección solo si es segura y estable (6 lecturas seguidas en cámara)
+  function consider(best, immediate) {
+    const cls = best.probability > 0.85 ? best.className : null;
+    if (!cls) { candidate = ""; count = 0; return; }
+    if (immediate) { setTarget(cls); return; }
+    if (cls === candidate) count++; else { candidate = cls; count = 1; }
+    if (count >= 6) setTarget(cls);
+  }
+
+  function setTarget(cls) {
+    if (cls === target) return;
+    target = cls;
+    renderLed();
+  }
+
+  function renderLed() {
+    const led = LEDS[target];
+    const on = ledEnabled && !!led;
+
+    // LED virtual
+    const el = $("led");
+    el.classList.toggle("on", on);
+    el.style.setProperty("--c", on ? led.color : "var(--led-off)");
+    el.setAttribute("aria-label", on ? led.name + " encendido" : "LED apagado");
+    $("ledName").textContent = on ? led.name + " encendido" : "LED apagado";
+    $("ledMode").textContent = writer ? "Arduino conectado + LED virtual" : "LED virtual (sin Arduino)";
+
+    // LED físico
+    const code = on ? led.code : OFF_CODE;
+    if (writer && code !== lastSent) {
+      writer.write(new TextEncoder().encode(code)).catch(() => {
+        setStatus("Se perdió la conexión con el Arduino. Conéctalo de nuevo.", true);
+        writer = null; lastSent = "";
+        $("btnArd").textContent = "Conectar Arduino";
+        $("btnArd").disabled = false;
+        renderLed();
+      });
+      lastSent = code;
+    }
+  }
+
+  function toggleLed() {
+    ledEnabled = !ledEnabled;
+    $("btnLed").setAttribute("aria-pressed", ledEnabled);
+    $("btnLed").textContent = ledEnabled ? "Apagar LED" : "Encender LED";
+    renderLed();
+  }
+
+  async function connectArduino() {
+    if (!("serial" in navigator)) {
+      setStatus("Tu navegador no soporta puerto serie. Usa Chrome o Edge. Mientras tanto verás el LED virtual.", true);
+      return;
+    }
+    try {
+      const port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 9600 });
+      writer = port.writable.getWriter();
+      lastSent = "";
+      $("btnArd").textContent = "Arduino conectado";
+      $("btnArd").disabled = true;
+      setStatus("Arduino conectado.");
+      renderLed();
+    } catch (e) {
+      setStatus("No se pudo conectar el Arduino. Cierra el Monitor Serie del IDE e intenta de nuevo.", true);
+    }
+  }
+
+  $("btnLed").addEventListener("click", toggleLed);
+  $("btnArd").addEventListener("click", connectArduino);
+  $("btnCam").addEventListener("click", toggleCamera);
+  $("file").addEventListener("change", onFile);
+  init();
+</script>
+</body>
+</html>
